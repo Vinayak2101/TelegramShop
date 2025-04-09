@@ -1,54 +1,44 @@
-from blockcypher import create_unsigned_tx, make_tx_signatures, broadcast_signed_tx, get_address_overview
-from binance.spot import Spot
 from dotenv import load_dotenv
 import os
+import requests
 
 load_dotenv()
 
-# BlockCypher for BTC and LTC
-BTC_API_KEY = os.getenv("BTC_API_KEY")
-LTC_API_KEY = os.getenv("LTC_API_KEY")
-BNB_API_KEY = os.getenv("BNB_API_KEY")
-BNB_API_SECRET = os.getenv("BNB_API_SECRET")
+SELLAUTH_SHOP_ID = os.getenv("SELLAUTH_SHOP_ID")
+SELLAUTH_API_KEY = os.getenv("SELLAUTH_API_KEY")
 
-# Binance client for USDT (BEP-20)
-binance_client = Spot(BNB_API_KEY, BNB_API_SECRET)
+def generate_sellauth_checkout(product_id, variant_id, quantity, gateway):
+    url = f"https://api.sellauth.com/v1/shops/{SELLAUTH_SHOP_ID}/checkout"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {SELLAUTH_API_KEY}"
+    }
+    payload = {
+        "cart": [{
+            "productId": product_id,
+            "variantId": variant_id,
+            "quantity": quantity
+        }],
+        "gateway": gateway
+    }
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code == 200:
+        data = response.json()
+        return data.get("txid") or data.get("transaction_id") or data.get("id")
+    else:
+        raise Exception(f"Sellauth checkout error: {response.text}")
 
-# Your master wallet addresses (replace with real ones)
-BTC_WALLET = "your_btc_address"
-LTC_WALLET = "your_ltc_address"
-BNB_WALLET = "your_bnb_address"  # BEP-20 compatible
-
-def generate_address(currency):
-    if currency == "BTC":
-        # Generate new BTC address
-        response = requests.post(
-            f"https://api.blockcypher.com/v1/btc/main/addrs?token={BTC_API_KEY}"
-        )
-        return response.json()["address"]
-    elif currency == "LTC":
-        response = requests.post(
-            f"https://api.blockcypher.com/v1/ltc/main/addrs?token={LTC_API_KEY}"
-        )
-        return response.json()["address"]
-    elif currency == "USDT_BEP20":
-        # Generate deposit address for BEP-20 (Binance API)
-        response = binance_client.new_deposit_address(coin="USDT", network="BSC")
-        return response["address"]
-    return None
-
-def check_payment(address, currency, amount):
-    if currency == "BTC":
-        overview = get_address_overview(address, api_key=BTC_API_KEY, coin_symbol="btc")
-        return overview["final_balance"] >= amount * 10**8  # Convert to satoshis
-    elif currency == "LTC":
-        overview = get_address_overview(address, api_key=LTC_API_KEY, coin_symbol="ltc")
-        return overview["final_balance"] >= amount * 10**8
-    elif currency == "USDT_BEP20":
-        # Check Binance deposit history
-        deposits = binance_client.get_deposit_history(coin="USDT", status=1)  # Confirmed deposits
-        for deposit in deposits:
-            if deposit["address"] == address and float(deposit["amount"]) >= amount:
+def check_sellauth_transaction_status(txid):
+    url = f"https://api.sellauth.com/v1/shops/{SELLAUTH_SHOP_ID}/payouts/transactions"
+    headers = {
+        "Authorization": f"Bearer {SELLAUTH_API_KEY}"
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        transactions = response.json().get("data", [])
+        for tx in transactions:
+            if tx.get("txid") == txid and tx.get("confirmations", 0) >= 1:
                 return True
         return False
-    return False
+    else:
+        raise Exception(f"Transaction status check failed: {response.text}")
